@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "roblox-agent-runtime": {
+      "command": "node",
+      "args": ["C:\\absolute\\path\\to\\roblox-agent-runtime\\dist\\server.js"],
+      "env": {
+        "ROBLOX_AGENT_RUNTIME_DIR": "C:\\absolute\\path\\to\\experiment-workspace\\.runtime"
+      }
+    }
+  }
+}
+

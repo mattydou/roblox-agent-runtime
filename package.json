@@ -1,0 +1,42 @@
+{
+  "name": "roblox-agent-runtime",
+  "version": "0.2.0",
+  "description": "Deterministic six-tool MCP middleware for Roblox Studio research",
+  "type": "module",
+  "bin": {
+    "roblox-agent-runtime": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "DESIGN.md",
+    "examples"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "tsx tests/live-smoke.ts",
+    "test:live:r15": "tsx tests/live-r15-animation.ts"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "dependencies": {
+    "@chrrxs/robloxstudio-mcp": "3.0.3",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "license": "MIT"
+}
