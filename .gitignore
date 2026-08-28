@@ -1,5 +1,30 @@
+# Dependencies and build output
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
+
+# Runtime and test artifacts
 .runtime/
+test-results/
+playwright-report/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tgz
+*.tmp
+
+# Local configuration and secrets
 .env
 .env.*
+!.env.example
+.npmrc
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
