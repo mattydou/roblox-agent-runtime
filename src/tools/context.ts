@@ -1,9 +1,13 @@
 import type { ChrrxsAdapter } from '../chrrxs/adapter.js';
 import type { TaskStore } from '../runtime/task-store.js';
+import type { ManagedRuntime } from '../runtime/managed-runtime.js';
+import type { ViewportController } from '../runtime/viewport-controller.js';
 
 export interface ToolContext {
   chrrxs: ChrrxsAdapter;
   tasks: TaskStore;
+  managedRuntime: ManagedRuntime;
+  viewport: ViewportController;
 }
 
 export interface ToolResult {
@@ -13,6 +17,7 @@ export interface ToolResult {
     | Record<string, unknown>
   >;
   isError?: boolean;
+  telemetry?: Record<string, unknown>;
 }
 
 export function textResult(value: unknown, isError = false): ToolResult {
@@ -21,4 +26,3 @@ export function textResult(value: unknown, isError = false): ToolResult {
     ...(isError ? { isError: true } : {}),
   };
 }
-

@@ -2,13 +2,21 @@ import { normalizeResult } from '../runtime/result-normalizer.js';
 import type { InspectInput } from './schemas.js';
 import type { ToolContext, ToolResult } from './context.js';
 import { textResult } from './context.js';
-import { compileRuntimeInspection, parseExecuteResult, type RuntimeInspectionRequest } from '../runtime/luau.js';
+import { compileGuiInspection, compileRuntimeInspection, parseExecuteResult, type RuntimeInspectionRequest } from '../runtime/luau.js';
 
 function withInstance(input: { instance_id?: string }): Record<string, unknown> {
   return input.instance_id ? { instance_id: input.instance_id } : {};
 }
 
 export async function handleInspect(input: InspectInput, context: ToolContext): Promise<ToolResult> {
+  if (input.mode === 'gui') {
+    const tool = input.context === 'edit' ? 'execute_luau' : 'eval_client_runtime';
+    const raw = await context.chrrxs.callJson(tool, {
+      code: compileGuiInspection({ path: input.path, depth: input.depth, max_results: input.max_results, interactive_only: input.interactive_only, static_context: input.context === 'edit' }),
+      ...(input.context === 'edit' ? { target: 'edit' } : { target: 'client-1' }), ...withInstance(input),
+    }, 10_000);
+    return textResult(parseExecuteResult(raw));
+  }
   if ('context' in input && input.context !== 'edit') {
     if (!['hierarchy', 'search', 'properties'].includes(input.mode)) {
       throw new Error(`mode=${input.mode} is not supported in runtime context=${input.context}; use hierarchy, search, or properties`);

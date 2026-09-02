@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compileAcquireRigFixture, compileAnimation, compileCleanupRigFixture, compileRigInspection,
-  compileCleanupPlaytestPreview, compilePreparePlaytestPreview, compileStartPlaytestPreview,
+  compileRegisterAnimationArtifact, compileStartPlaytestPreview,
 } from '../src/animation/compiler.js';
 import { resolveAnimationTargets, type RigManifest } from '../src/animation/rig.js';
 import { validateAnimationDefinition } from '../src/animation/validator.js';
@@ -125,7 +125,7 @@ describe('animation definition', () => {
     expect(() => resolveAnimationTargets(animation('Right Shoulder'), r15)).toThrow(/authoritative rig/);
   });
 
-  it('compiles dynamic Roblox-native inspection, pose hierarchy, and preview APIs', () => {
+  it('compiles dynamic Roblox-native inspection and an artifact with no registration side effect', () => {
     const inspection = compileRigInspection('game.Workspace.R15Rig');
     const custom = manifest('custom', [
       { name: 'Core' },
@@ -138,11 +138,13 @@ describe('animation definition', () => {
     expect(inspection).toContain('AnimationConstraint');
     expect(source).toContain('Instance.new("KeyframeSequence")');
     expect(source).toContain('Instance.new("KeyframeMarker")');
-    expect(source).toContain('RegisterActiveAnimationClip');
+    expect(source).not.toContain('RegisterActiveAnimationClip');
+    expect(source).not.toContain('RegisterKeyframeSequence');
     expect(source).toContain('expected_fingerprint');
     expect(source).toContain('RIG_MANIFEST_STALE');
     expect(source).toContain('deployment_ready = false');
-    expect(source).toContain('preview_id_scope = "studio_session"');
+    expect(source).toContain('preview_id_scope = "none"');
+    expect(source).toContain('artifact_committed = true');
     expect(source).not.toContain('rig_manifest =');
     expect(source).not.toContain('TweenService');
     for (const hardcoded of ['Right Arm', 'RightShoulder', 'UpperTorso', 'LowerTorso', 'RightUpperArm']) {
@@ -189,14 +191,13 @@ describe('animation definition', () => {
     expect(cleaned).toBe(true);
   });
 
-  it('uses a marked script-free temporary harness for managed playtest previews', () => {
-    const prepare = compilePreparePlaytestPreview('game.ServerStorage.RobloxAgentArtifacts.Animations.Wave', '__Harness');
-    const start = compileStartPlaytestPreview('game.Workspace.Rig', '__Harness');
-    const cleanup = compileCleanupPlaytestPreview('__Harness');
-    expect(prepare).toContain('RobloxAgentManagedPreviewHarness');
-    expect(prepare).toContain('sequence:Clone()');
-    expect(start).toContain('RegisterKeyframeSequence');
-    expect(cleanup).toContain('refusing to delete unmarked preview harness');
-    expect(`${prepare}${start}${cleanup}`).not.toContain('Instance.new("Script")');
+  it('uses the live-verified non-active edit registration and runtime-only playback', () => {
+    const registration = compileRegisterAnimationArtifact('game.ServerStorage.RobloxAgentArtifacts.Animations.Wave');
+    const start = compileStartPlaytestPreview('game.Workspace.Rig', 'active://wave');
+    expect(registration).toContain('AnimationClipProvider"):RegisterAnimationClip');
+    expect(registration).not.toContain('RegisterActiveAnimationClip');
+    expect(start).toContain('animator:LoadAnimation(animation)');
+    expect(start).not.toContain('RegisterKeyframeSequence');
+    expect(`${registration}${start}`).not.toContain('Instance.new("Script")');
   });
 });

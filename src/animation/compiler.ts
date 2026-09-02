@@ -361,91 +361,43 @@ return HttpService:JSONEncode({ success = true, managed_fixture = true, deleted 
 `;
 }
 
-export function compileStartAnimationPreview(targetRig: string, previewAnimationPath: string): string {
-  const payload = payloadExpression({ target_rig: targetRig, preview_animation_path: previewAnimationPath });
-  return `
-${PATH_HELPERS}
-local request = ${payload}
-local rig = resolvePath(request.target_rig)
-local preview = resolvePath(request.preview_animation_path)
-if not rig:IsA("Model") or not preview:IsA("Animation") then error("preview target or animation is unavailable") end
-local controller = rig:FindFirstChildWhichIsA("Humanoid", true) or rig:FindFirstChildWhichIsA("AnimationController", true)
-if not controller then error("authoritative target rig has no animation controller") end
-local animator = controller:FindFirstChildWhichIsA("Animator")
-if not animator then animator = Instance.new("Animator"); animator.Parent = controller end
-for _, playing in ipairs(animator:GetPlayingAnimationTracks()) do
-  if playing.Animation and playing.Animation.AnimationId == preview.AnimationId then playing:Stop(0) end
-end
-local track = animator:LoadAnimation(preview)
-track:Play(0)
-rig:SetAttribute("RobloxAgentManagedPreviewId", preview.AnimationId)
-return HttpService:JSONEncode({ success = true, preview_id = preview.AnimationId })
-`;
-}
-
-export function compileStopAnimationPreview(targetRig: string, previewId: string): string {
-  const payload = payloadExpression({ target_rig: targetRig, preview_id: previewId });
-  return `
-${PATH_HELPERS}
-local request = ${payload}
-local rig = resolvePath(request.target_rig)
-local controller = rig:FindFirstChildWhichIsA("Humanoid", true) or rig:FindFirstChildWhichIsA("AnimationController", true)
-local stopped = 0
-local animator = controller and controller:FindFirstChildWhichIsA("Animator")
-if animator then
-  for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-    if track.Animation and track.Animation.AnimationId == request.preview_id then track:Stop(0); stopped += 1 end
-  end
-end
-if rig:GetAttribute("RobloxAgentManagedPreviewId") == request.preview_id then rig:SetAttribute("RobloxAgentManagedPreviewId", nil) end
-return HttpService:JSONEncode({ success = true, stopped = stopped })
-`;
-}
-
-export function compilePreparePlaytestPreview(artifactPath: string, harnessName: string): string {
-  const payload = payloadExpression({ artifact_path: artifactPath, harness_name: harnessName });
+export function compileRegisterAnimationArtifact(artifactPath: string): string {
+  const payload = payloadExpression({ artifact_path: artifactPath });
   return `
 ${PATH_HELPERS}
 local request = ${payload}
 local sequence = resolvePath(request.artifact_path)
 if not sequence:IsA("KeyframeSequence") then error("artifact_path must resolve to a KeyframeSequence") end
-local replicatedStorage = game:GetService("ReplicatedStorage")
-if replicatedStorage:FindFirstChild(request.harness_name) then error("playtest preview harness already exists") end
-local harness = Instance.new("Folder")
-harness.Name = request.harness_name
-harness:SetAttribute("RobloxAgentManagedPreviewHarness", true)
-local clone = sequence:Clone()
-clone.Name = "Clip"
-clone.Parent = harness
-harness.Parent = replicatedStorage
-return HttpService:JSONEncode({ success = true, harness_path = instancePath(harness) })
+local contentId = game:GetService("AnimationClipProvider"):RegisterAnimationClip(sequence)
+return HttpService:JSONEncode({ success = true, registered = true, preview_id = contentId, context = "edit" })
 `;
 }
 
-export function compileStartPlaytestPreview(targetRig: string, harnessName: string): string {
-  const payload = payloadExpression({ target_rig: targetRig, harness_name: harnessName });
+export function compileStartPlaytestPreview(targetRig: string, previewId: string, play = true): string {
+  const payload = payloadExpression({ target_rig: targetRig, preview_id: previewId, play });
   return `
 ${PATH_HELPERS}
 local request = ${payload}
-local harness = game:GetService("ReplicatedStorage"):FindFirstChild(request.harness_name)
-if not harness or harness:GetAttribute("RobloxAgentManagedPreviewHarness") ~= true then error("managed playtest preview harness is unavailable") end
-local sequence = harness:FindFirstChild("Clip")
-if not sequence or not sequence:IsA("KeyframeSequence") then error("managed playtest preview clip is unavailable") end
 local rig = resolvePath(request.target_rig)
 if not rig:IsA("Model") then error("runtime target_rig must resolve to a Model") end
 local controller = rig:FindFirstChildWhichIsA("Humanoid", true) or rig:FindFirstChildWhichIsA("AnimationController", true)
 if not controller then error("runtime target rig has no animation controller") end
 local animator = controller:FindFirstChildWhichIsA("Animator")
 if not animator then animator = Instance.new("Animator"); animator.Parent = controller end
-local contentId = game:GetService("KeyframeSequenceProvider"):RegisterKeyframeSequence(sequence)
+if not request.play then return HttpService:JSONEncode({ success = true, preview_id = request.preview_id, registered = true, played = false }) end
 local animation = Instance.new("Animation")
 animation.Name = "RobloxAgentManagedRuntimePreview"
-animation.AnimationId = contentId
-local track = animator:LoadAnimation(animation)
-animation:Destroy()
-track:Play(0)
-rig:SetAttribute("RobloxAgentManagedRuntimePreviewId", contentId)
-return HttpService:JSONEncode({ success = true, preview_id = contentId })
+animation.AnimationId = request.preview_id
+animation:SetAttribute("RobloxAgentManagedRuntimePreview", true)
+animation.Parent = rig
+local loaded, trackOrError = pcall(function()
+  local track = animator:LoadAnimation(animation)
+  track:Play(0)
+  return track
+end)
+if not loaded then animation:Destroy(); error(trackOrError) end
+rig:SetAttribute("RobloxAgentManagedRuntimePreviewId", request.preview_id)
+return HttpService:JSONEncode({ success = true, preview_id = request.preview_id, registered = true, played = true, track_starts = 1 })
 `;
 }
 
@@ -461,22 +413,11 @@ local stopped = 0
 if animator then for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
   if track.Animation and track.Animation.AnimationId == request.preview_id then track:Stop(0); stopped += 1 end
 end end
+for _, childInstance in ipairs(rig:GetChildren()) do
+  if childInstance:IsA("Animation") and childInstance:GetAttribute("RobloxAgentManagedRuntimePreview") == true and childInstance.AnimationId == request.preview_id then childInstance:Destroy() end
+end
 rig:SetAttribute("RobloxAgentManagedRuntimePreviewId", nil)
 return HttpService:JSONEncode({ success = true, stopped = stopped })
-`;
-}
-
-export function compileCleanupPlaytestPreview(harnessName: string): string {
-  const payload = payloadExpression({ harness_name: harnessName });
-  return `
-local HttpService = game:GetService("HttpService")
-local request = ${payload}
-local harness = game:GetService("ReplicatedStorage"):FindFirstChild(request.harness_name)
-if harness then
-  if harness:GetAttribute("RobloxAgentManagedPreviewHarness") ~= true then error("refusing to delete unmarked preview harness") end
-  harness:Destroy()
-end
-return HttpService:JSONEncode({ success = true, removed = harness ~= nil })
 `;
 }
 
@@ -538,16 +479,11 @@ local animations = root:FindFirstChild("Animations")
 if not animations then animations = Instance.new("Folder"); animations.Name = "Animations"; animations.Parent = root end
 
 local existing = animations:FindFirstChild(definition.name)
-if existing then
-  if not definition.replace_existing then error("animation artifact already exists: " .. instancePath(existing)) end
-  existing:Destroy()
-end
-local previewName = definition.name .. "_Preview"
-local existingPreview = animations:FindFirstChild(previewName)
-if existingPreview then existingPreview:Destroy() end
+if existing and not definition.replace_existing then error("animation artifact already exists: " .. instancePath(existing)) end
 
 local sequence = Instance.new("KeyframeSequence")
-sequence.Name = definition.name
+sequence.Name = definition.name .. "__RobloxAgentPending"
+sequence:SetAttribute("RobloxAgentPendingAnimationArtifact", true)
 sequence.Loop = definition.loop
 sequence.Priority = Enum.AnimationPriority[definition.priority]
 
@@ -597,50 +533,34 @@ end
 
 local ok, buildError = pcall(function()
   for _, keyframeDefinition in ipairs(definition.keyframes) do sequence:AddKeyframe(buildKeyframe(keyframeDefinition)) end
-  sequence.Parent = animations
 end)
 if not ok then sequence:Destroy(); error(buildError) end
-
-local provider = game:GetService("AnimationClipProvider")
-local registered, contentId = pcall(function() return provider:RegisterActiveAnimationClip(sequence) end)
-if not registered then sequence:Destroy(); error("RegisterActiveAnimationClip failed: " .. tostring(contentId)) end
-
-local preview = Instance.new("Animation")
-preview.Name = previewName
-preview.AnimationId = contentId
-preview.Parent = animations
-
-local play = { requested = definition.preview == "play", success = nil }
-if play.requested then
-  local controller = rig:FindFirstChildWhichIsA("Humanoid", true) or rig:FindFirstChildWhichIsA("AnimationController", true)
-  if not controller then
-    play.success = false
-    play.error = "authoritative target rig has no Humanoid or AnimationController"
-  else
-    local animator = controller:FindFirstChildWhichIsA("Animator")
-    if not animator then animator = Instance.new("Animator"); animator.Parent = controller end
-    local played, trackOrError = pcall(function()
-      local track = animator:LoadAnimation(preview)
-      track:Play(0.1)
-      return track
-    end)
-    play.success = played
-    if not played then play.error = tostring(trackOrError) end
-  end
+sequence.Name = definition.name
+sequence:SetAttribute("RobloxAgentPendingAnimationArtifact", nil)
+local committed, commitError = pcall(function() sequence.Parent = animations end)
+if not committed then sequence:Destroy(); error("animation artifact commit failed: " .. tostring(commitError)) end
+if existing then
+  local replaced, replaceError = pcall(function() existing:Destroy() end)
+  if not replaced then sequence:Destroy(); error("animation replacement commit failed; previous artifact preserved: " .. tostring(replaceError)) end
 end
-
-local successful = registered and (not play.requested or play.success == true)
+local legacyPreview = animations:FindFirstChild(definition.name .. "_Preview")
+if legacyPreview then pcall(function() legacyPreview:Destroy() end) end
 return HttpService:JSONEncode({
-  success = successful,
+  success = true,
   kind = "animation",
   artifact_path = instancePath(sequence),
-  preview_animation_path = instancePath(preview),
-  preview_id = tostring(contentId),
-  preview_id_scope = "studio_session",
-  published_animation_id = nil,
+  artifact_committed = true,
+  preview_id_scope = "none",
   deployment_ready = false,
-  preview_registered = true,
-  preview_play = play,
+  preview_registered = false,
+  preview_play = { requested = false, success = nil },
+  stages = {
+    validation = { success = true },
+    artifact = { success = true, committed = true, path = instancePath(sequence) },
+    registration = { requested = false, success = nil },
+    playback = { requested = false, success = nil },
+    observation = { requested = false, success = nil },
+  },
   target_rig = instancePath(rig),
   rig = {
     rig_type = ${payloadExpression(manifest.rig_type)},

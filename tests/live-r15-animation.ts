@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -9,15 +11,17 @@ if (process.env.ROBLOX_AGENT_LIVE_R15_TEST !== '1') {
   process.exit(0);
 }
 
-const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+const suffix = randomUUID().slice(0, 8);
+const runtimeDir = path.join(os.tmpdir(), `roblox-agent-r15-live-${suffix}`);
+const env = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')), ROBLOX_AGENT_RUNTIME_DIR: runtimeDir };
 const transport = new StdioClientTransport({
   command: process.execPath, args: [path.resolve('dist/server.js')], cwd: process.cwd(), env,
   stderr: 'inherit', maxBufferSize: 32 * 1024 * 1024,
 });
 const client = new Client({ name: 'roblox-agent-r15-live-smoke', version: '0.1.0' }, { capabilities: {} });
-const suffix = randomUUID().slice(0, 8);
 const rigName = `__RobloxAgentR15_${suffix}`;
 const animationName = `__RobloxAgentR15Wave_${suffix}`;
+const artifactOnlyName = `${animationName}_ArtifactOnly`;
 const cachedAnimationName = `${animationName}_Cached`;
 let rigPath: string | undefined;
 
@@ -50,6 +54,19 @@ try {
   for (const name of expectedParts) if (!animatedParts.some((part) => part.name === name)) throw new Error(`R15 manifest omitted ${name}`);
   console.log(`PASS discovered native R15 hierarchy including ${expectedParts.join(', ')}`);
 
+  const beforeArtifactOnly = await call('roblox_test', { mode: 'solo', action: 'status' });
+  if (JSON.stringify(beforeArtifactOnly).includes('"running":true')) throw new Error('artifact-only precondition expected no running Solo playtest');
+  const artifactOnly = await call('roblox_author', { kind: 'animation', operation: 'create', animation: {
+    target_rig: rigPath, name: artifactOnlyName, preview: 'none', replace_existing: true,
+    keyframes: [{ time: 0, poses: [{ joint: 'RightHand' }] }, { time: 0.2, poses: [{ joint: 'RightHand', rotation_degrees: [0, 0, 5] }] }],
+  } });
+  if (artifactOnly.success !== true || artifactOnly.preview_registered !== false || (artifactOnly.stages as Record<string, unknown>)?.registration === undefined) {
+    throw new Error(`artifact-only R15 creation failed: ${JSON.stringify(artifactOnly)}`);
+  }
+  const afterArtifactOnly = await call('roblox_test', { mode: 'solo', action: 'status' });
+  if (JSON.stringify(afterArtifactOnly).includes('"running":true')) throw new Error('artifact-only creation started a Solo playtest');
+  console.log('PASS committed an artifact-only R15 KeyframeSequence without starting or registering a preview');
+
   const authored = await call('roblox_author', { kind: 'animation', operation: 'create', animation: {
     target_rig: rigPath, name: animationName, preview: 'play', replace_existing: true, priority: 'Action',
     keyframes: [
@@ -78,10 +95,11 @@ try {
 } finally {
   if (rigPath) {
     const cleanup = await call('roblox_author', {
-      kind: 'animation', operation: 'cleanup_fixture', target_rig: rigPath, artifact_names: [animationName, cachedAnimationName],
+      kind: 'animation', operation: 'cleanup_fixture', target_rig: rigPath, artifact_names: [artifactOnlyName, animationName, cachedAnimationName],
     });
     if (cleanup.success !== true) throw new Error(`R15 cleanup verification failed: ${JSON.stringify(cleanup)}`);
     console.log('PASS removed the wrapper-managed R15 fixture and animation artifacts');
   }
   await client.close().catch(() => undefined);
+  await rm(runtimeDir, { recursive: true, force: true });
 }

@@ -7,6 +7,7 @@ import type { ChrrxsAdapter } from '../src/chrrxs/adapter.js';
 import { extractJsonToolResult } from '../src/chrrxs/client.js';
 import { RobloxAgentRuntime } from '../src/runtime/app.js';
 import { Telemetry } from '../src/runtime/telemetry.js';
+import { parseExecuteResult } from '../src/runtime/luau.js';
 import { clearAuthorRigManifestCache } from '../src/tools/author.js';
 
 class MockChrrxs implements ChrrxsAdapter {
@@ -34,10 +35,26 @@ class MockChrrxs implements ChrrxsAdapter {
 
 class RigAuthorMock extends MockChrrxs {
   failStaleOnce = false;
+  supportPreview = false;
+  running = false;
 
   override async callJson(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
     this.calls.push({ name, args });
     const code = String(args.code ?? '');
+    if (this.supportPreview && name === 'solo_playtest') {
+      if (args.action === 'status') return { success: true, running: this.running, roles: this.running ? ['server', 'client-1'] : [] };
+      if (args.action === 'start') { this.running = true; return { success: true, running: true, roles: ['server', 'client-1'] }; }
+      if (args.action === 'stop') { this.running = false; return { success: true, running: false }; }
+    }
+    if (this.supportPreview && ['eval_server_runtime', 'eval_client_runtime'].includes(name)) {
+      const value = code.includes('RobloxAgentManagedRuntimePreview')
+        ? { success: true, registered: true, played: true, preview_id: 'active://runtime-wave', track_starts: 1 }
+        : { success: true };
+      return { success: true, returnValue: JSON.stringify(value) };
+    }
+    if (this.supportPreview && code.includes('RegisterAnimationClip')) {
+      return { success: true, returnValue: JSON.stringify({ success: true, registered: true, preview_id: 'active://runtime-wave', context: 'edit' }) };
+    }
     if (!code.includes('Instance.new("KeyframeSequence")')) {
       return { success: true, returnValue: JSON.stringify({
         target_rig: 'game.Workspace.R15Rig',
@@ -125,6 +142,8 @@ describe('mocked Chrrxs adapter routing', () => {
     expect(extractJsonToolResult({
       content: [{ type: 'text', text: JSON.stringify({ success: true, source: 'legacy' }) }],
     })).toEqual({ success: true, source: 'legacy' });
+    expect(parseExecuteResult({ success: true, returnValue: '{"context":"edit"}' })).toEqual({ context: 'edit' });
+    expect(parseExecuteResult({ ok: true, bridge: 'ok', result: '{"context":"server"}', output: [] })).toEqual({ context: 'server' });
   });
 
   it('inspects the authoritative R15 rig before authoring with a canonical target', async () => {
@@ -136,7 +155,7 @@ describe('mocked Chrrxs adapter routing', () => {
       kind: 'animation',
       operation: 'create',
       animation: {
-        target_rig: 'game.Workspace.R15Rig', name: 'Wave', preview: 'play',
+        target_rig: 'game.Workspace.R15Rig', name: 'Wave', preview: 'none',
         keyframes: [
           { time: 0, poses: [{ joint: 'RightWrist' }] },
           { time: 0.25, poses: [{ joint: 'RightWrist', rotation_degrees: [0, 0, 20] }] },
@@ -149,7 +168,7 @@ describe('mocked Chrrxs adapter routing', () => {
 
     const second = await runtime.dispatch('roblox_author', {
       kind: 'animation', animation: {
-        target_rig: 'game.Workspace.R15Rig', name: 'SecondWave', preview: 'play',
+        target_rig: 'game.Workspace.R15Rig', name: 'SecondWave', preview: 'none',
         keyframes: [
           { time: 0, poses: [{ joint: 'RightWrist' }] },
           { time: 0.25, poses: [{ joint: 'RightWrist', rotation_degrees: [0, 0, -20] }] },
@@ -181,5 +200,42 @@ describe('mocked Chrrxs adapter routing', () => {
     expect(mock.calls).toHaveLength(4);
     const body = JSON.parse((result.content[0] as { type: 'text'; text: string }).text) as Record<string, unknown>;
     expect(body.rig_validation).toMatchObject({ manifest_cache: 'refreshed' });
+  });
+
+  it('keeps a committed artifact when a requested preview stage cannot establish a runtime', async () => {
+    clearAuthorRigManifestCache();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'roblox-agent-adapter-'));
+    const runtime = new RobloxAgentRuntime(new RigAuthorMock(), new Telemetry(root), root);
+    const result = await runtime.dispatch('roblox_author', { kind: 'animation', animation: {
+      target_rig: 'game.Workspace.R15Rig', name: 'PreservedWave', preview: 'play',
+      keyframes: [{ time: 0, poses: [{ joint: 'RightHand' }] }, { time: 0.2, poses: [{ joint: 'RightHand', rotation_degrees: [0, 0, 10] }] }],
+    } });
+    const body = JSON.parse((result.content[0] as { type: 'text'; text: string }).text) as Record<string, unknown>;
+    expect(result.isError).toBe(true);
+    expect(body).toMatchObject({ artifact_path: 'game.ServerStorage.RobloxAgentArtifacts.Animations.Wave', success: false });
+    expect(body.stages).toMatchObject({ registration: { requested: true, success: false } });
+  });
+
+  it('registers and plays through one managed server runtime and returns screenshot bytes separately', async () => {
+    clearAuthorRigManifestCache();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'roblox-agent-adapter-'));
+    const mock = new RigAuthorMock();
+    mock.supportPreview = true;
+    const runtime = new RobloxAgentRuntime(mock, new Telemetry(root), root);
+    const result = await runtime.dispatch('roblox_author', { kind: 'animation', animation: {
+      target_rig: 'game.Workspace.R15Rig', name: 'RuntimeWave', preview: 'play',
+      keyframes: [{ time: 0, poses: [{ joint: 'RightHand' }] }, { time: 0.2, poses: [{ joint: 'RightHand', rotation_degrees: [0, 0, 10] }] }],
+    }, observation: { samples: [{ time: 0 }], continue_playback: false } });
+    expect(result.isError).not.toBe(true);
+    expect(result.content.filter((block) => block.type === 'image')).toHaveLength(1);
+    const body = JSON.parse((result.content[0] as { type: 'text'; text: string }).text) as Record<string, unknown>;
+    expect(body).toMatchObject({ preview_execution_context: 'server', preview_registered: true, preview_play: { success: true }, deployment_ready: false });
+    const starts = mock.calls.filter((item) => item.name === 'solo_playtest' && item.args.action === 'start');
+    const stops = mock.calls.filter((item) => item.name === 'solo_playtest' && item.args.action === 'stop');
+    expect(starts).toHaveLength(1);
+    expect(stops).toHaveLength(1);
+    expect(mock.calls.some((item) => item.name === 'eval_server_runtime' && String(item.args.code).includes('animator:LoadAnimation'))).toBe(true);
+    expect(mock.calls.some((item) => item.name === 'execute_luau' && String(item.args.code).includes('RegisterAnimationClip'))).toBe(true);
+    expect(mock.calls.some((item) => item.name === 'eval_server_runtime' && String(item.args.code).includes('RegisterAnimationClip'))).toBe(false);
   });
 });

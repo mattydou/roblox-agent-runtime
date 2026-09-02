@@ -6,6 +6,15 @@ import { compileRuntimeInspection, parseExecuteResult } from '../runtime/luau.js
 
 export async function handleObserve(input: ObserveInput, context: ToolContext): Promise<ToolResult> {
   const instance = input.instance_id ? { instance_id: input.instance_id } : {};
+  if (input.mode === 'views') {
+    const result = await context.viewport.capture(input);
+    const manifest = JSON.parse((result.content[0] as { text: string }).text) as Record<string, unknown>;
+    if (manifest.success === true) await context.tasks.recordEvidence({
+      tool: 'roblox_observe', operation: 'views', summary: `captured ${input.views.length} controlled viewport views`, success: true,
+      category: 'visual', source: 'runtime',
+    }, 'screenshot');
+    return result;
+  }
   if (input.mode === 'screenshot') {
     const result = await context.chrrxs.call('capture_screenshot', {
       format: input.format,
@@ -16,6 +25,7 @@ export async function handleObserve(input: ObserveInput, context: ToolContext): 
     if (!hasImage) throw new Error('Chrrxs screenshot returned no MCP image content');
     await context.tasks.recordEvidence({
       tool: 'roblox_observe', operation: 'screenshot', summary: 'captured a viewport screenshot', success: true,
+      category: 'visual', source: 'runtime',
     }, 'screenshot');
     return result as ToolResult;
   }

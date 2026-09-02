@@ -25,6 +25,8 @@ export interface TaskEvidence {
   operation: string;
   summary: string;
   success: boolean;
+  category?: 'artifact' | 'preview' | 'visual' | 'lifecycle' | 'observation' | 'behavior' | 'cleanup' | 'implementation' | 'infrastructure' | 'readiness' | 'setup' | 'interaction';
+  source?: 'runtime' | 'caller';
 }
 
 export interface TaskRecord {
@@ -39,7 +41,7 @@ export interface TaskRecord {
   requirements: TaskRequirement[];
   completed_operations: TaskEvidence[];
   observations: Array<{ timestamp: string; text: string }>;
-  validation_results: Array<{ timestamp: string; name: string; success: boolean; details?: string }>;
+  validation_results: Array<{ timestamp: string; name: string; success: boolean; details?: string; source: 'caller' }>;
 }
 
 export interface BeginTaskInput {
@@ -117,9 +119,13 @@ export class TaskStore {
         ...(typeof parsed.completed_at === 'string' ? { completed_at: parsed.completed_at } : {}),
         plan: Array.isArray(parsed.plan) ? parsed.plan : [],
         requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [],
-        completed_operations: Array.isArray(parsed.completed_operations) ? parsed.completed_operations : [],
+        completed_operations: Array.isArray(parsed.completed_operations)
+          ? parsed.completed_operations.map((item) => ({ ...item, source: item.source === 'runtime' ? 'runtime' as const : 'caller' as const }))
+          : [],
         observations: Array.isArray(parsed.observations) ? parsed.observations : [],
-        validation_results: Array.isArray(parsed.validation_results) ? parsed.validation_results : [],
+        validation_results: Array.isArray(parsed.validation_results)
+          ? parsed.validation_results.map((item) => ({ ...item, source: 'caller' as const }))
+          : [],
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`task not found: ${id}`);
@@ -154,7 +160,7 @@ export class TaskStore {
 
   async recordValidation(name: string, success: boolean, details?: string, requirementId?: string): Promise<TaskRecord> {
     const task = await this.requireCurrent();
-    task.validation_results.push({ timestamp: new Date().toISOString(), name, success, ...(details ? { details } : {}) });
+    task.validation_results.push({ timestamp: new Date().toISOString(), name, success, source: 'caller', ...(details ? { details } : {}) });
     if (success && requirementId) this.satisfyRequirement(task, (item) => item.id === requirementId, details ?? name);
     await this.save(task);
     return task;
@@ -169,7 +175,7 @@ export class TaskStore {
     }
     if (evidence.success) {
       this.satisfyRequirement(task, (item) => item.type === 'artifact' && ['roblox_edit', 'roblox_author'].includes(evidence.tool), evidence.summary);
-      this.satisfyRequirement(task, (item) => item.type === 'test' && evidence.tool === 'roblox_test', evidence.summary);
+      if (capability === 'behavioral_test') this.satisfyRequirement(task, (item) => item.type === 'test' || item.type === 'behavioral_test', evidence.summary);
     }
     await this.save(task);
   }
@@ -185,6 +191,19 @@ export class TaskStore {
     task.completed_at = new Date().toISOString();
     await this.save(task);
     return { completed: true, task, remaining };
+  }
+
+  evidenceState(task: TaskRecord): Record<string, unknown> {
+    const runtime = task.completed_operations.filter((item) => item.source === 'runtime');
+    const behavior = runtime.filter((item) => item.category === 'behavior');
+    return {
+      implementation_evidence: runtime.some((item) => ['artifact', 'implementation'].includes(item.category ?? '')),
+      lifecycle_log_smoke: runtime.some((item) => item.category === 'lifecycle' && item.success),
+      objective_behavior: behavior.some((item) => !item.success) ? 'failed' : behavior.some((item) => item.success) ? 'validated' : 'not_run',
+      managed_cleanup_verified: runtime.some((item) => item.category === 'cleanup' && item.success),
+      visual_evidence: runtime.some((item) => item.category === 'visual' && item.success),
+      caller_authored_validations: task.validation_results.length,
+    };
   }
 
   private async requireCurrent(): Promise<TaskRecord> {

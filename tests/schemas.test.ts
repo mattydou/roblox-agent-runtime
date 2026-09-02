@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PUBLIC_TOOLS } from '../src/tools/definitions.js';
-import { authorInputSchema, editInputSchema, inspectInputSchema, taskInputSchema } from '../src/tools/schemas.js';
+import { authorInputSchema, editInputSchema, inspectInputSchema, taskInputSchema, testInputSchema } from '../src/tools/schemas.js';
 
 describe('public schemas', () => {
   it('exposes exactly six named tools', () => {
@@ -15,7 +15,7 @@ describe('public schemas', () => {
       roblox_inspect: ['mode', 'context', 'path', 'query', 'properties'],
       roblox_edit: ['operations', 'continue_on_error'],
       roblox_author: ['kind', 'operation', 'target_rig', 'fixture', 'animation', 'observation'],
-      roblox_test: ['mode', 'action', 'collect_logs', 'log_timeout_ms'],
+      roblox_test: ['mode', 'action', 'session_id', 'batch', 'refresh_stale', 'collect_logs', 'log_timeout_ms'],
       roblox_observe: ['mode', 'context', 'path', 'properties'],
     };
     for (const tool of PUBLIC_TOOLS) {
@@ -66,5 +66,29 @@ describe('public schemas', () => {
       target_rig: 'game.Workspace.R15Rig', name: 'Wave', keyframes: [{ time: 0, poses: [{ joint: 'RightHand' }] }],
     } });
     expect(create.operation).toBe('create');
+    expect(create.animation.preview).toBe('none');
+  });
+
+  it('keeps runtime Luau bounded and fixed to managed server/client-1 roles', () => {
+    expect(testInputSchema.safeParse({ mode: 'solo', action: 'run_batch', batch: {} }).success).toBe(false);
+    expect(testInputSchema.safeParse({ mode: 'solo', action: 'run_scenario', batch: { unknown: true } }).success).toBe(false);
+    expect(testInputSchema.safeParse({ mode: 'solo', action: 'run_scenario', batch: { actions: [{ id: 'fact', kind: 'luau', role: 'server', source: 'return 1' }] } }).success).toBe(true);
+    expect(testInputSchema.safeParse({ mode: 'solo', action: 'run_scenario', batch: { actions: [{ id: 'fact', kind: 'luau', role: 'client-2', source: 'return 1' }] } }).success).toBe(false);
+    expect(testInputSchema.safeParse({ mode: 'solo', action: 'run_scenario', batch: { actions: [{ id: 'fact', kind: 'luau', role: 'server', source: 'x'.repeat(50_001) }] } }).success).toBe(false);
+    expect(PUBLIC_TOOLS.find((tool) => tool.name === 'roblox_test')!.description).toMatch(/objective|machine-readable/);
+    expect(PUBLIC_TOOLS.find((tool) => tool.name === 'roblox_author')!.description).toMatch(/generic gameplay tests/);
+  });
+
+  it('keeps discovery compact, six-tool coherent, and one-shot first', () => {
+    const minified = Buffer.byteLength(JSON.stringify(PUBLIC_TOOLS));
+    const pretty = Buffer.byteLength(JSON.stringify(PUBLIC_TOOLS, null, 2));
+    expect(minified).toBeLessThanOrEqual(27_000);
+    expect(pretty).toBeLessThanOrEqual(61_000);
+    const test = PUBLIC_TOOLS.find((tool) => tool.name === 'roblox_test')!;
+    const examples = test.inputSchema.examples as Array<Record<string, unknown>>;
+    expect(examples[0]).toMatchObject({ action: 'run_scenario' });
+    expect(test.description).toMatch(/use one run_scenario first/i);
+    expect(PUBLIC_TOOLS.find((tool) => tool.name === 'roblox_task')!.description).toMatch(/Short single-session work should use zero task calls/i);
+    expect(PUBLIC_TOOLS.find((tool) => tool.name === 'roblox_edit')!.description).toMatch(/structured operations.*edit-context Luau/i);
   });
 });

@@ -1,7 +1,9 @@
 import type { EditInput } from '../tools/schemas.js';
 import { payloadExpression } from '../runtime/luau.js';
 
-export function compileEditBatch(input: EditInput): string {
+type StructuredEditInput = Extract<EditInput, { operations: unknown[] }>;
+
+export function compileEditBatch(input: StructuredEditInput): string {
   const payload = payloadExpression({ operations: input.operations, continueOnError: input.continue_on_error });
   return `
 local HttpService = game:GetService("HttpService")

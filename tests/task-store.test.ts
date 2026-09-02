@@ -51,10 +51,11 @@ describe('TaskStore', () => {
     await writeFile(path.join(root, 'tasks', 'legacy.json'), JSON.stringify({
       id: 'legacy', goal: 'old task', status: 'active', created_at: '2025-01-01T00:00:00.000Z',
       plan: [{ id: 'manual', description: 'optional', status: 'pending' }],
+      completed_operations: [{ timestamp: '2025-01-01T00:00:00.000Z', tool: 'roblox_test', operation: 'solo_start', summary: 'legacy', success: true }],
     }));
     const store = new TaskStore(root);
     const loaded = await store.current();
-    expect(loaded).toMatchObject({ enforcement: 'advisory', requirements: [], completed_operations: [] });
+    expect(loaded).toMatchObject({ enforcement: 'advisory', requirements: [], completed_operations: [{ source: 'caller' }] });
     await store.markStep('manual', 'completed');
     await store.recordObservation('kept for research');
     await store.recordValidation('manual check', true);
@@ -63,16 +64,21 @@ describe('TaskStore', () => {
     });
   });
 
-  it('satisfies generic artifact and test requirements from successful public evidence', async () => {
+  it('classifies lifecycle separately and satisfies test requirements only from objective behavior', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'roblox-agent-task-'));
     const store = new TaskStore(root);
     await store.begin({ goal: 'automatic evidence', requirements: [
       { id: 'artifact', type: 'artifact', status: 'pending' }, { id: 'test', type: 'test', status: 'pending' },
     ] });
     await store.recordEvidence({ tool: 'roblox_edit', operation: 'batch', summary: 'edited', success: true });
-    await store.recordEvidence({ tool: 'roblox_test', operation: 'solo_stop', summary: 'tested', success: true });
+    await store.recordEvidence({ tool: 'roblox_test', operation: 'solo_stop', category: 'lifecycle', source: 'runtime', summary: 'lifecycle only', success: true });
     expect((await store.current())?.requirements).toMatchObject([
-      { status: 'completed', evidence: 'edited' }, { status: 'completed', evidence: 'tested' },
+      { status: 'completed', evidence: 'edited' }, { status: 'pending' },
     ]);
+    await store.recordEvidence({ tool: 'roblox_test', operation: 'evidence_batch', category: 'behavior', source: 'runtime', summary: '2/2 assertions passed', success: true }, 'behavioral_test');
+    expect((await store.current())?.requirements[1]).toMatchObject({ status: 'completed', evidence: '2/2 assertions passed' });
+    expect(store.evidenceState((await store.current())!)).toMatchObject({ lifecycle_log_smoke: true, objective_behavior: 'validated' });
+    await store.recordEvidence({ tool: 'roblox_test', operation: 'evidence_batch', category: 'behavior', source: 'runtime', summary: '1/2 assertions passed', success: false });
+    expect(store.evidenceState((await store.current())!)).toMatchObject({ objective_behavior: 'failed' });
   });
 });

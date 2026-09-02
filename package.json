@@ -1,6 +1,6 @@
 {
   "name": "roblox-agent-runtime",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "description": "Deterministic six-tool MCP middleware for Roblox Studio research",
   "type": "module",
   "bin": {
@@ -22,7 +22,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live": "tsx tests/live-smoke.ts",
-    "test:live:r15": "tsx tests/live-r15-animation.ts"
+    "test:live:r15": "tsx tests/live-r15-animation.ts",
+    "test:live:v2": "tsx tests/live-v2-evidence.ts",
+    "test:live:v3": "tsx tests/live-v3-acceptance.ts",
+    "test:live:v4": "tsx tests/live-v4-acceptance.ts",
+    "test:live:animation-matrix": "tsx tests/live-animation-context-matrix.ts"
   },
   "engines": {
     "node": ">=20.11"

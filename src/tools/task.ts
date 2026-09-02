@@ -62,6 +62,7 @@ export async function handleTask(input: TaskInput, context: ToolContext): Promis
         task_id: completion.task.id,
         enforcement: completion.task.enforcement,
         remaining_advisory: completion.remaining,
+        evidence_state: context.tasks.evidenceState(completion.task),
         ...(input.detail === 'full' ? { task: completion.task } : { summary: summary(completion.task) }),
       };
       return textResult(response, !completion.completed);

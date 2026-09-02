@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
-export const RUNTIME_VERSION = '0.2.0';
+export const RUNTIME_VERSION = '0.5.0';
 export const TELEMETRY_CHRRXS_VERSION = '3.0.3';
 
 export interface ModelCallTelemetry {
@@ -13,6 +13,26 @@ export interface ModelCallTelemetry {
   request_bytes: number;
   response_bytes: number;
   success: boolean;
+  evidence_session_event?: string;
+  revision_stale?: boolean;
+  managed_playtest_started?: number;
+  managed_playtest_reused?: number;
+  managed_playtest_stops?: number;
+  action_count?: number;
+  probe_count?: number;
+  watch_count?: number;
+  assertion_count?: number;
+  assertion_failures?: number;
+  sampling_count?: number;
+  sampling_truncated?: number;
+  runtime_error_count?: number;
+  managed_artifacts_created?: number;
+  managed_artifacts_cleaned?: number;
+  managed_artifacts_remaining?: number;
+  animation_artifact_success?: number;
+  animation_preview_success?: number;
+  preview_execution_context?: string;
+  synchronized_animation_samples?: number;
 }
 
 export interface InternalCallTelemetry {

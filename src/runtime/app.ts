@@ -19,8 +19,11 @@ import { handleTest } from '../tools/test.js';
 import { handleObserve } from '../tools/observe.js';
 import type { ToolResult } from '../tools/context.js';
 import { textResult } from '../tools/context.js';
+import { ManagedRuntime } from './managed-runtime.js';
+import { ViewportController } from './viewport-controller.js';
+import { failure } from './failure.js';
 
-type Handler = (input: never, context: { chrrxs: ChrrxsAdapter; tasks: TaskStore }) => Promise<ToolResult>;
+type Handler = (input: never, context: { chrrxs: ChrrxsAdapter; tasks: TaskStore; managedRuntime: ManagedRuntime; viewport: ViewportController }) => Promise<ToolResult>;
 
 const SCHEMAS: Record<string, ZodType> = {
   roblox_task: taskInputSchema,
@@ -42,6 +45,8 @@ const HANDLERS: Record<string, Handler> = {
 
 export class RobloxAgentRuntime {
   readonly tasks: TaskStore;
+  readonly managedRuntime: ManagedRuntime;
+  readonly viewport: ViewportController;
 
   constructor(
     readonly chrrxs: ChrrxsAdapter,
@@ -49,6 +54,8 @@ export class RobloxAgentRuntime {
     runtimeDir: string,
   ) {
     this.tasks = new TaskStore(runtimeDir);
+    this.managedRuntime = new ManagedRuntime(chrrxs, telemetry);
+    this.viewport = new ViewportController(chrrxs);
   }
 
   listTools() {
@@ -67,21 +74,25 @@ export class RobloxAgentRuntime {
       if (!schema || !handler) throw new Error(`unknown public tool: ${name}`);
       const parsed = schema.safeParse(args ?? {});
       if (!parsed.success) {
+        const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
         result = textResult({
-          error: 'invalid_arguments',
-          issues: parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+          success: false, error: 'invalid_arguments', failure_kind: 'validation', error_code: 'INVALID_ARGUMENTS', issues,
+          failure: failure({ category: 'validation', code: 'INVALID_ARGUMENTS', stage: 'schema validation', summary: 'The request did not match the strict public tool schema.', observed: { issues }, retryable: 'no' }),
         }, true);
       } else {
-        result = await handler(parsed.data as never, { chrrxs: this.chrrxs, tasks: this.tasks });
+        result = await handler(parsed.data as never, { chrrxs: this.chrrxs, tasks: this.tasks, managedRuntime: this.managedRuntime, viewport: this.viewport });
       }
       success = result.isError !== true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       result = textResult({
-        error: 'tool_failed',
-        message: error instanceof Error ? error.message : String(error),
+        success: false, error: 'tool_failed', message, failure_kind: 'infrastructure', error_code: 'TOOL_FAILED',
+        failure: failure({ category: 'infrastructure', code: 'TOOL_FAILED', stage: 'tool dispatch', summary: message, retryable: 'unknown' }),
       }, true);
     }
     taskId = (await this.tasks.currentId()) ?? taskId;
+    const runtimeTelemetry = result.telemetry;
+    delete result.telemetry;
     await this.telemetry.model({
       timestamp: new Date().toISOString(),
       task_id: taskId,
@@ -91,9 +102,12 @@ export class RobloxAgentRuntime {
       request_bytes: approximateBytes(args),
       response_bytes: approximateBytes(result),
       success,
+      ...(runtimeTelemetry ?? {}),
     });
     return result;
   }
+
+  async close(): Promise<void> { await this.viewport.close(); await this.managedRuntime.close(); }
 
   private operation(args: unknown): string {
     if (!args || typeof args !== 'object' || Array.isArray(args)) return 'unknown';
@@ -101,7 +115,8 @@ export class RobloxAgentRuntime {
     if (typeof record.action === 'string') return record.action;
     if (typeof record.mode === 'string') return record.mode;
     if (typeof record.kind === 'string') return record.kind;
+    if (typeof record.source === 'string') return 'luau';
+    if (Array.isArray(record.operations)) return 'batch';
     return 'call';
   }
 }
-

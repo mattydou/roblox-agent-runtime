@@ -12,7 +12,7 @@ const REQUIRED_CHRRXS_TOOLS = [
   'get_connected_instances', 'get_place_info', 'get_project_structure', 'search_objects',
   'get_instance_properties', 'grep_scripts', 'get_script_source', 'selection', 'get_runtime_logs',
   'execute_luau', 'solo_playtest', 'multiplayer_playtest', 'capture_screenshot',
-  'eval_server_runtime', 'eval_client_runtime',
+  'eval_server_runtime', 'eval_client_runtime', 'simulate_keyboard_input', 'simulate_mouse_input',
 ];
 
 function enabled(value: string | undefined): boolean {
@@ -59,6 +59,7 @@ async function main(): Promise<void> {
   const close = async () => {
     if (closing) return;
     closing = true;
+    await runtime.close().catch(() => undefined);
     await server.close().catch(() => undefined);
     await chrrxs.close();
   };

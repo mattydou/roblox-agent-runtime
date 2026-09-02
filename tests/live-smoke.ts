@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -8,7 +10,9 @@ if (process.env.ROBLOX_AGENT_LIVE_TEST !== '1') {
   process.exit(0);
 }
 
-const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+const suffix = randomUUID().slice(0, 8);
+const runtimeDir = path.join(os.tmpdir(), `roblox-agent-live-${suffix}`);
+const env = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')), ROBLOX_AGENT_RUNTIME_DIR: runtimeDir };
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [path.resolve('dist/server.js')],
@@ -18,7 +22,6 @@ const transport = new StdioClientTransport({
   maxBufferSize: 32 * 1024 * 1024,
 });
 const client = new Client({ name: 'roblox-agent-live-smoke', version: '0.1.0' }, { capabilities: {} });
-const suffix = randomUUID().slice(0, 8);
 const rootName = `__RobloxAgentSmoke_${suffix}`;
 const rootPath = `game.Workspace.${rootName}`;
 let playtestStarted = false;
@@ -96,4 +99,5 @@ try {
   if (playtestStarted) await call('roblox_test', { mode: 'solo', action: 'stop', collect_logs: false }).catch(() => undefined);
   if (treeCreated) await call('roblox_edit', { operations: [{ op: 'delete', target: rootPath }] }).catch(() => undefined);
   await client.close().catch(() => undefined);
+  await rm(runtimeDir, { recursive: true, force: true });
 }
